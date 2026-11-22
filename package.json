@@ -1,0 +1,13 @@
+{
+  "name": "tienda-api",
+  "version": "1.0.0",
+  "description": "API de pedidos de ejemplo para practicar liberación y despliegue continuo (CI/CD)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/app.js && node --check src/server.js && node --check src/metrics.js",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}

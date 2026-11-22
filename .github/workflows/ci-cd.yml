@@ -1,0 +1,108 @@
+name: CI/CD tienda-api
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Si llega un commit nuevo, cancela la ejecución anterior de la misma rama.
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  # 1) Integración continua: validar sintaxis y ejecutar pruebas unitarias.
+  test:
+    name: Pruebas unitarias
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm run check
+      - run: npm test
+
+  # 2) Liberación: crear el entorno de staging y probarlo.
+  release-environment:
+    name: Entorno de liberación (staging)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_VERSION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generar el entorno de liberación
+        run: ./scripts/create-environment.sh staging
+
+      - name: Pruebas de humo en el entorno
+        run: ./scripts/smoke-test.sh http://localhost:3000
+
+      - name: Mostrar logs si algo falló
+        if: failure()
+        run: docker compose -f docker-compose.staging.yml --env-file .env.staging logs
+
+      - name: Destruir el entorno
+        if: always()
+        run: ./scripts/destroy-environment.sh staging
+
+  # 3) Publicar la imagen (solo en main).
+  publish-image:
+    name: Publicar imagen en GHCR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: release-environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nombre de imagen en minúsculas
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: APP_VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+  # 4) Despliegue continuo a producción (con aprobación manual).
+  deploy-production:
+    name: Despliegue a producción
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production          # aquí se configura el revisor que aprueba
+      url: ${{ vars.PRODUCTION_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Desplegar y verificar
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: ./scripts/deploy.sh production

@@ -1,0 +1,33 @@
+# Entorno de liberación (staging): la API + Prometheus para monitoreo.
+services:
+  api:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-local}
+    image: ${APP_IMAGE:-tienda-api:local}
+    container_name: tienda-api-${APP_ENV:-staging}
+    environment:
+      APP_ENV: ${APP_ENV:-staging}
+      APP_VERSION: ${APP_VERSION:-local}
+      PORT: 3000
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: tienda-prometheus-${APP_ENV:-staging}
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - api
+    restart: unless-stopped
